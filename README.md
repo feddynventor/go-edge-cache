@@ -18,3 +18,10 @@ entry, err := cache.Load("/path/to/file")
 data := entry.Bytes()
 cache.Evict("/path/to/file")
 ```
+
+### Server
+
+* **Path traversal protection**: `filepath.Join` + `filepath.Abs` garantiscono che il path finale abbia come prefisso `baseDir`; qualsiasi tentativo di uscire dalla directory radice restituisce 403
+* **Auto content-type**: sniffa i primi 512 byte via `http.DetectContentType`
+* **HTTPS only**: nessun fallback in chiaro
+* Espone `fileHandler(fc *FileCache, contentDir string) http.HandlerFunc` come unico punto di ingresso HTTP

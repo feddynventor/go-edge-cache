@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
+	"time"
+
 	"go.yaml.in/yaml/v4"
 )
 
@@ -19,8 +22,8 @@ type Config struct {
 		} `yaml:"tls"`
 	} `yaml:"server"`
 	Logging struct {
-		LogPath         string `yaml:"log_path"`
-		QueueMaxSize    int    `yaml:"queue_max_size"`
+		LogPath      string `yaml:"log_path"`
+		QueueMaxSize int    `yaml:"queue_max_size"`
 	} `yaml:"logging"`
 	Cache struct {
 		TTL int `yaml:"ttl"`
@@ -46,5 +49,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("%+v\n", cfg)
+	fc, err := NewFileCache(256*1024*1024, time.Duration(cfg.Cache.TTL)*time.Second)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	addr := fmt.Sprintf("%s:%d", cfg.Host.Iface, cfg.Host.Port)
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/", fileHandler(fc, cfg.Server.ContentDirectory))
+
+	if err := http.ListenAndServeTLS(addr, cfg.Server.TLS.Cert, cfg.Server.TLS.CertKey, mux); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 }

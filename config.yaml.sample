@@ -1,0 +1,17 @@
+
+host:
+  iface: "127.0.0.1"
+  port: 9090
+
+server:
+  content_directory: "/tmp/go-edge-cache"
+  tls:
+    cert: "certs/server.crt"
+    cert_key: "certs/server.key"
+
+logging:
+  log_path: "/var/log/go-edge-cache.log"
+  queue_max_size: 1000
+
+cache:
+  ttl: 30

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -15,21 +16,10 @@ var (
 	ErrUnavailable = errors.New("unavailable") // errori generici cache/IO
 )
 
-// Validators
-
-func resolvePath(baseDir, urlPath string) (string, error) {
-	// filepath.Join normalizza "..", ".", doppi slash
-	fullPath := filepath.Join(baseDir, urlPath)
-
-	// Valida che il risultato sia dentro baseDir
-	basePath, _ := filepath.Abs(baseDir)
-	cleanPath, _ := filepath.Abs(fullPath)
-
-	if !strings.HasPrefix(cleanPath, basePath+string(filepath.Separator)) {
-		return "", ErrForbidden
-	}
-
-	return cleanPath, nil
+type CacheServer struct {
+	fc      *FileCache
+	baseDir string
+	rq      *RequestQueue
 }
 
 // Use dependencies
@@ -70,12 +60,58 @@ func serveResponse(w http.ResponseWriter, r *http.Request, entry *CacheEntry, er
 	}
 	w.Header().Set("Content-Type", http.DetectContentType(header))
 	w.Header().Set("Content-Length", strconv.FormatInt(entry.Size(), 10))
+	// End request lifecycle
 	w.Write(data)
 }
 
-func fileHandler(fc *FileCache, contentDir string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		entry, err := fetchFile(fc, contentDir, r.URL.Path)
-		serveResponse(w, r, entry, err)
+func (s *CacheServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	entry, err := fetchFile(s.fc, s.baseDir, r.URL.Path)
+	serveResponse(w, r, entry, err)
+	s.rq.Enqueue(RequestEntry{
+		Timestamp:  start,
+		Method:     r.Method,
+		Path:       r.URL.Path,
+		Status:     httpStatus(err),
+		Size:       responseSize(entry),
+		Duration:   time.Since(start),
+		RemoteAddr: r.RemoteAddr,
+	})
+}
+
+// Helpers and validators
+
+func httpStatus(err error) int {
+	switch {
+	case errors.Is(err, ErrForbidden):
+		return http.StatusForbidden
+	case errors.Is(err, os.ErrNotExist):
+		return http.StatusNotFound
+	case err != nil:
+		return http.StatusServiceUnavailable
+	default:
+		return http.StatusOK
 	}
+}
+
+func responseSize(entry *CacheEntry) int {
+	if entry == nil {
+		return 0
+	}
+	return int(entry.Size())
+}
+
+func resolvePath(baseDir, urlPath string) (string, error) {
+	// filepath.Join normalizza "..", ".", doppi slash
+	fullPath := filepath.Join(baseDir, urlPath)
+
+	// Valida che il risultato sia dentro baseDir
+	basePath, _ := filepath.Abs(baseDir)
+	cleanPath, _ := filepath.Abs(fullPath)
+
+	if !strings.HasPrefix(cleanPath, basePath+string(filepath.Separator)) {
+		return "", ErrForbidden
+	}
+
+	return cleanPath, nil
 }

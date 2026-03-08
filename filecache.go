@@ -5,6 +5,7 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -12,10 +13,11 @@ import (
 const O_DIRECT = 0x4000 // Linux syscall index
 
 type CacheEntry struct {
-	path string
-	data []byte
-	size int64
-	mu   sync.RWMutex
+	path    string
+	data    []byte
+	size    int64
+	addedAt time.Time
+	mu      sync.RWMutex
 }
 
 func (ce *CacheEntry) Bytes() []byte {
@@ -38,9 +40,10 @@ type FileCache struct {
 	totalSize int64
 	maxSize   int64
 	blockSize int64
+	ttl       time.Duration
 }
 
-func NewFileCache(maxSize int64) (*FileCache, error) {
+func NewFileCache(maxSize int64, ttl time.Duration) (*FileCache, error) {
 	// Ottieni block size reale dal filesystem
 	stat := unix.Statfs_t{}
 	if err := unix.Statfs("/", &stat); err != nil {
@@ -51,6 +54,7 @@ func NewFileCache(maxSize int64) (*FileCache, error) {
 		entries:   make(map[string]*CacheEntry),
 		maxSize:   maxSize,
 		blockSize: stat.Bsize,
+		ttl:       ttl,
 	}, nil
 }
 
@@ -59,7 +63,11 @@ func (fc *FileCache) Load(path string) (*CacheEntry, error) {
 	defer fc.mu.Unlock()
 
 	if entry, exists := fc.entries[path]; exists {
-		return entry, nil
+		if fc.ttl == 0 || time.Since(entry.addedAt) < fc.ttl {
+			return entry, nil
+		}
+		fc.totalSize -= entry.size
+		delete(fc.entries, path)
 	}
 
 	fd, err := os.OpenFile(path, os.O_RDONLY, 0)
@@ -93,9 +101,10 @@ func (fc *FileCache) Load(path string) (*CacheEntry, error) {
 	copy(heapData, buffer[:n])
 
 	entry := &CacheEntry{
-		path: path,
-		data: heapData,
-		size: fileSize,
+		path:    path,
+		data:    heapData,
+		size:    fileSize,
+		addedAt: time.Now(),
 	}
 
 	fc.entries[path] = entry

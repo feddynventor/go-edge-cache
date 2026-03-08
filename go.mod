@@ -2,4 +2,7 @@ module feddynventor/go-edge-cache
 
 go 1.25.7
 
-require go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
+require (
+	go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
+	golang.org/x/sys v0.42.0
+)

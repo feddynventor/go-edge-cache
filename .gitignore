@@ -1,2 +1,4 @@
 certs/*
+dist/
 config.yaml
+*log

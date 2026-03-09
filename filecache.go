@@ -17,12 +17,11 @@ type CacheEntry struct {
 	data    []byte
 	size    int64
 	addedAt time.Time
-	mu      sync.RWMutex
+	mu      sync.Mutex
+	err     error
 }
 
 func (ce *CacheEntry) Bytes() []byte {
-	ce.mu.RLock()
-	defer ce.mu.RUnlock()
 	return ce.data
 }
 
@@ -58,59 +57,90 @@ func NewFileCache(maxSize int64, ttl time.Duration) (*FileCache, error) {
 	}, nil
 }
 
+// waitReady aspetta che il caricamento dell'entry sia completato
+func waitReady(entry *CacheEntry) (*CacheEntry, error) {
+	entry.mu.Lock()
+	entry.mu.Unlock()
+	return entry, entry.err
+}
+
 func (fc *FileCache) Load(path string) (*CacheEntry, error) {
 	fc.mu.Lock()
-	defer fc.mu.Unlock()
 
-	if entry, exists := fc.entries[path]; exists {
-		if fc.ttl == 0 || time.Since(entry.addedAt) < fc.ttl {
-			return entry, nil
-		}
+	entry, exists := fc.entries[path]
+	if exists && (fc.ttl == 0 || time.Since(entry.addedAt) < fc.ttl) {
+		// Entry valida: rilascia subito, poi aspetta l'eventuale caricamento
+		fc.mu.Unlock()
+		return waitReady(entry)
+	}
+
+	if exists {
+		// Entry scaduta: rimuovila prima di crearne una nuova
 		fc.totalSize -= entry.size
 		delete(fc.entries, path)
 	}
 
-	fd, err := os.OpenFile(path, os.O_RDONLY, 0)
+	entry = &CacheEntry{path: path, addedAt: time.Now()}
+	entry.mu.Lock() // in attesa di valorizzazione
+
+	fc.entries[path] = entry
+	fc.mu.Unlock()
+
+	if err := fc.readFromDisk(entry); err != nil {
+		entry.err = err
+		fc.mu.Lock()
+		if fc.entries[path] == entry {
+			delete(fc.entries, path)
+		}
+		fc.mu.Unlock()
+
+		entry.mu.Unlock()
+		return nil, err
+	}
+
+	entry.mu.Unlock()
+	return entry, nil
+}
+
+func (fc *FileCache) readFromDisk(entry *CacheEntry) error {
+	fd, err := os.OpenFile(entry.path, os.O_RDONLY, 0)
 	if err != nil {
-		return nil, fmt.Errorf("open failed: %w", err)
+		return fmt.Errorf("open failed: %w", err)
 	}
 	defer fd.Close()
 
 	stat, err := fd.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("stat failed: %w", err)
+		return fmt.Errorf("stat failed: %w", err)
 	}
-
 	fileSize := stat.Size()
+
+	fc.mu.Lock()
 	if fc.totalSize+fileSize > fc.maxSize {
-		return nil, fmt.Errorf("cache full")
+		fc.mu.Unlock()
+		return fmt.Errorf("cache full")
 	}
-
-	// Alloca buffer roundato a block size per O_DIRECT
-	roundedSize := ((fileSize + fc.blockSize - 1) / fc.blockSize) * fc.blockSize
-	buffer := make([]byte, roundedSize)
-
-	// Leggi con syscall (O_DIRECT)
-	n, err := syscall.Read(int(fd.Fd()), buffer)
-	if err != nil {
-		return nil, fmt.Errorf("read failed: %w", err)
-	}
-
-	// Copia in heap pulito (dimensione reale)
-	heapData := make([]byte, fileSize)
-	copy(heapData, buffer[:n])
-
-	entry := &CacheEntry{
-		path:    path,
-		data:    heapData,
-		size:    fileSize,
-		addedAt: time.Now(),
-	}
-
-	fc.entries[path] = entry
 	fc.totalSize += fileSize
+	fc.mu.Unlock()
 
-	return entry, nil
+	roundedSize := ((fileSize + fc.blockSize - 1) / fc.blockSize) * fc.blockSize
+	buf := make([]byte, roundedSize)
+
+	n, err := syscall.Read(int(fd.Fd()), buf)
+	if err != nil {
+		fc.mu.Lock()
+		fc.totalSize -= fileSize
+		fc.mu.Unlock()
+		return fmt.Errorf("read failed: %w", err)
+	}
+
+	data := make([]byte, fileSize)
+	copy(data, buf[:n])
+
+	entry.data = data
+	entry.size = fileSize
+
+	return nil
 }
 
 func (fc *FileCache) Contains(path string) bool {

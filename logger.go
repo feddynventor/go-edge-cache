@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
 )
@@ -20,15 +21,21 @@ type RequestEntry struct {
 type RequestQueue struct {
 	ch   chan RequestEntry
 	done chan struct{}
+	file *os.File
 }
 
-func NewRequestQueue(queueSize int) *RequestQueue {
+func NewRequestQueue(queueSize int, logPath string) *RequestQueue {
 	if queueSize <= 0 {
 		queueSize = 1000
+	}
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Fatalf("failed to open log file: %v", err)
 	}
 	rq := &RequestQueue{
 		ch:   make(chan RequestEntry, queueSize),
 		done: make(chan struct{}),
+		file: f,
 	}
 	go rq.consume()
 	return rq
@@ -45,7 +52,7 @@ func (rq *RequestQueue) Enqueue(e RequestEntry) {
 func (rq *RequestQueue) consume() {
 	for entry := range rq.ch {
 		fmt.Fprintf(
-			os.Stdout,
+			rq.file,
 			"%s method=%s path=%s status=%d size=%d duration_ms=%.2f remote=%s\n",
 			entry.Timestamp.UTC().Format(time.RFC3339),
 			entry.Method,
@@ -56,6 +63,7 @@ func (rq *RequestQueue) consume() {
 			entry.RemoteAddr,
 		)
 	}
+	rq.file.Close()
 	rq.done <- struct{}{}
 }
 

@@ -60,7 +60,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	rq := NewRequestQueue(cfg.Logging.QueueMaxSize) // starts logger goroutine
+	rq := NewRequestQueue(cfg.Logging.QueueMaxSize, cfg.Logging.LogPath) // starts logger goroutine
 
 	mux := http.NewServeMux()
 	mux.Handle("/", &CacheServer{

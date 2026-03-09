@@ -98,20 +98,54 @@ func TestResolvePath(t *testing.T) {
 
 func TestFetchFile(t *testing.T) {
 	contentDir := t.TempDir()
-	os.WriteFile(filepath.Join(contentDir, "hello.txt"), []byte("ciao"), 0644)
+	content := []byte("ciao")
+	os.WriteFile(filepath.Join(contentDir, "hello.txt"), content, 0644)
 
 	fc, err := NewFileCache(10*1024*1024, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// File esistente
-	entry, err := fetchFile(fc, contentDir, "/hello.txt")
+	// Prima chiamata: cache miss
+	result, err := fetchFile(fc, contentDir, "/hello.txt")
 	if err != nil {
 		t.Fatalf("file esistente: errore inatteso: %v", err)
 	}
-	if string(entry.Bytes()) != "ciao" {
-		t.Errorf("contenuto inatteso: %q", entry.Bytes())
+	if result.Hit {
+		t.Error("prima chiamata: atteso Hit=false (cache miss)")
+	}
+	if result.Entry == nil {
+		t.Fatal("prima chiamata: Entry nil")
+	}
+	if string(result.Entry.Bytes()) != string(content) {
+		t.Errorf("contenuto inatteso: got %q, want %q", result.Entry.Bytes(), content)
+	}
+	if result.Entry.Size() != int64(len(content)) {
+		t.Errorf("size inattesa: got %d, want %d", result.Entry.Size(), len(content))
+	}
+	if result.Entry.Path() == "" {
+		t.Error("Entry.Path() vuoto")
+	}
+	if result.Entry.AddedAt().IsZero() {
+		t.Error("Entry.AddedAt() zero")
+	}
+	if result.Entry.ModifiedAt().IsZero() {
+		t.Error("Entry.ModifiedAt() zero")
+	}
+
+	// Seconda chiamata: cache hit
+	result2, err := fetchFile(fc, contentDir, "/hello.txt")
+	if err != nil {
+		t.Fatalf("seconda chiamata: errore inatteso: %v", err)
+	}
+	if !result2.Hit {
+		t.Error("seconda chiamata: atteso Hit=true (cache hit)")
+	}
+	if result2.Entry == nil {
+		t.Fatal("seconda chiamata: Entry nil")
+	}
+	if string(result2.Entry.Bytes()) != string(content) {
+		t.Errorf("seconda chiamata: contenuto inatteso: %q", result2.Entry.Bytes())
 	}
 
 	// Path traversal → ErrForbidden
@@ -140,10 +174,11 @@ func TestLoadAndDetectMIME(t *testing.T) {
 	cache, err := NewFileCache(10*1024*1024, 0)
 
 	// Carica file
-	entry, err := cache.Load(testFile)
+	result, err := cache.Load(testFile)
 	if err != nil {
 		t.Fatalf("Cache init or File load failed: %v", err)
 	}
+	entry := result.Entry
 
 	// Leggi header (primi 512 byte)
 	data := entry.Bytes()
@@ -158,6 +193,7 @@ func TestLoadAndDetectMIME(t *testing.T) {
 	fmt.Printf("File: %s\n", entry.Path())
 	fmt.Printf("Size: %d\n", entry.Size())
 	fmt.Printf("MIME: %s\n", mimeType)
+	fmt.Printf("Hit: %v\n", result.Hit)
 	fmt.Printf("Cached: %v\n", cache.Contains(testFile))
 
 	// Verifica

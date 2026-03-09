@@ -24,24 +24,24 @@ type CacheServer struct {
 
 // Use dependencies
 
-func fetchFile(fc *FileCache, contentDir, urlPath string) (*CacheEntry, error) {
+func fetchFile(fc *FileCache, contentDir, urlPath string) (LoadResult, error) {
 	fullPath, err := resolvePath(contentDir, urlPath)
 	if err != nil {
-		return nil, err
+		return LoadResult{}, err
 	}
-	entry, err := fc.Load(fullPath)
+	result, err := fc.Load(fullPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, err
+			return LoadResult{}, err
 		}
-		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return LoadResult{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	return entry, nil
+	return result, nil
 }
 
 // export
 
-func serveResponse(w http.ResponseWriter, r *http.Request, entry *CacheEntry, err error) {
+func serveResponse(w http.ResponseWriter, r *http.Request, result LoadResult, err error) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrForbidden):
@@ -53,6 +53,7 @@ func serveResponse(w http.ResponseWriter, r *http.Request, entry *CacheEntry, er
 		}
 		return
 	}
+	entry := result.Entry
 	data := entry.Bytes()
 	header := data
 	if len(header) > 512 {
@@ -66,14 +67,14 @@ func serveResponse(w http.ResponseWriter, r *http.Request, entry *CacheEntry, er
 
 func (s *CacheServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	entry, err := fetchFile(s.fc, s.baseDir, r.URL.Path)
-	serveResponse(w, r, entry, err)
+	result, err := fetchFile(s.fc, s.baseDir, r.URL.Path)
+	serveResponse(w, r, result, err)
 	s.rq.Enqueue(RequestEntry{
 		Timestamp:  start,
 		Method:     r.Method,
 		Path:       r.URL.Path,
 		Status:     httpStatus(err),
-		Size:       responseSize(entry),
+		Size:       responseSize(result.Entry),
 		Duration:   time.Since(start),
 		RemoteAddr: r.RemoteAddr,
 	})

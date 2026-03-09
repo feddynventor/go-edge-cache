@@ -32,6 +32,10 @@ func (ce *CacheEntry) Size() int64 {
 func (ce *CacheEntry) Path() string {
 	return ce.path
 }
+type LoadResult struct {
+	Entry *CacheEntry
+	Hit   bool
+}
 
 type FileCache struct {
 	entries   map[string]*CacheEntry
@@ -64,14 +68,18 @@ func waitReady(entry *CacheEntry) (*CacheEntry, error) {
 	return entry, entry.err
 }
 
-func (fc *FileCache) Load(path string) (*CacheEntry, error) {
+func (fc *FileCache) Load(path string) (LoadResult, error) {
 	fc.mu.Lock()
 
 	entry, exists := fc.entries[path]
 	if exists && (fc.ttl == 0 || time.Since(entry.addedAt) < fc.ttl) {
 		// Entry valida: rilascia subito, poi aspetta l'eventuale caricamento
 		fc.mu.Unlock()
-		return waitReady(entry)
+		e, err := waitReady(entry)
+if err != nil {
+			return LoadResult{}, err
+		}
+		return LoadResult{Entry: e, Hit: true}, nil
 	}
 
 	if exists {
@@ -95,11 +103,11 @@ func (fc *FileCache) Load(path string) (*CacheEntry, error) {
 		fc.mu.Unlock()
 
 		entry.mu.Unlock()
-		return nil, err
+		return LoadResult{}, err
 	}
 
 	entry.mu.Unlock()
-	return entry, nil
+	return LoadResult{Entry: entry, Hit: false}, nil
 }
 
 func (fc *FileCache) readFromDisk(entry *CacheEntry) error {

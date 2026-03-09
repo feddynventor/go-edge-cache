@@ -13,12 +13,13 @@ import (
 const O_DIRECT = 0x4000 // Linux syscall index
 
 type CacheEntry struct {
-	path    string
-	data    []byte
-	size    int64
-	addedAt time.Time
-	mu      sync.Mutex
-	err     error
+	path       string
+	data       []byte
+	size       int64
+	addedAt    time.Time
+	modifiedAt time.Time
+	mu         sync.Mutex
+	err        error
 }
 
 func (ce *CacheEntry) Bytes() []byte {
@@ -32,6 +33,15 @@ func (ce *CacheEntry) Size() int64 {
 func (ce *CacheEntry) Path() string {
 	return ce.path
 }
+
+func (ce *CacheEntry) AddedAt() time.Time {
+	return ce.addedAt
+}
+
+func (ce *CacheEntry) ModifiedAt() time.Time {
+	return ce.modifiedAt
+}
+
 type LoadResult struct {
 	Entry *CacheEntry
 	Hit   bool
@@ -76,7 +86,7 @@ func (fc *FileCache) Load(path string) (LoadResult, error) {
 		// Entry valida: rilascia subito, poi aspetta l'eventuale caricamento
 		fc.mu.Unlock()
 		e, err := waitReady(entry)
-if err != nil {
+		if err != nil {
 			return LoadResult{}, err
 		}
 		return LoadResult{Entry: e, Hit: true}, nil
@@ -147,6 +157,7 @@ func (fc *FileCache) readFromDisk(entry *CacheEntry) error {
 
 	entry.data = data
 	entry.size = fileSize
+	entry.modifiedAt = stat.ModTime()
 
 	return nil
 }

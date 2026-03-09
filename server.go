@@ -43,14 +43,8 @@ func fetchFile(fc *FileCache, contentDir, urlPath string) (LoadResult, error) {
 
 func serveResponse(w http.ResponseWriter, r *http.Request, result LoadResult, err error) {
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrForbidden):
-			http.Error(w, "Forbidden", http.StatusForbidden)
-		case errors.Is(err, os.ErrNotExist):
-			http.NotFound(w, r)
-		default:
-			http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
-		}
+		status := httpStatus(err)
+		http.Error(w, http.StatusText(status), status)
 		return
 	}
 	entry := result.Entry
@@ -59,6 +53,13 @@ func serveResponse(w http.ResponseWriter, r *http.Request, result LoadResult, er
 	if len(header) > 512 {
 		header = header[:512]
 	}
+	xCache := "MISS"
+	if result.Hit {
+		xCache = "HIT"
+	}
+	w.Header().Set("X-Cache", xCache)
+	w.Header().Set("Last-Modified", entry.ModifiedAt().UTC().Format(http.TimeFormat))
+	w.Header().Set("Age", strconv.FormatInt(int64(time.Since(entry.AddedAt()).Seconds()), 10))
 	w.Header().Set("Content-Type", http.DetectContentType(header))
 	w.Header().Set("Content-Length", strconv.FormatInt(entry.Size(), 10))
 	// End request lifecycle

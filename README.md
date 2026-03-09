@@ -2,6 +2,12 @@
 
 High-performance HTTP/S server progettato per il serving di contenuti statici con latenza ridotta tramite caching in-memory e logging asincrono.
 
+How to Run:
+```
+go build
+./go-edge-cache <yaml config file>
+```
+
 ## Classi
 ### FileCache
 FileCache carica file interi in heap bypassando la page cache del kernel via O_DIRECT. Ogni eviction è controllata esclusivamente dal CDN, eliminando contention con l'algoritmo di paging del kernel.

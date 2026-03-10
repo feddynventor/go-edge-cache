@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -118,18 +118,27 @@ func (fc *FileCache) Load(path string) (LoadResult, error) {
 	return LoadResult{Entry: entry, Hit: false}, nil
 }
 
+func alignedSlice(size, align int64) []byte {
+	buf := make([]byte, size+align)
+	offset := align - (int64(uintptr(unsafe.Pointer(&buf[0]))) % align)
+	if offset == align {
+		offset = 0
+	}
+	return buf[offset : offset+size]
+}
+
 func (fc *FileCache) readFromDisk(entry *CacheEntry) error {
-	fd, err := os.OpenFile(entry.path, os.O_RDONLY, 0)
+	fd, err := syscall.Open(entry.path, syscall.O_RDONLY|O_DIRECT, 0)
 	if err != nil {
 		return fmt.Errorf("open failed: %w", err)
 	}
-	defer fd.Close()
+	defer syscall.Close(fd)
 
-	stat, err := fd.Stat()
-	if err != nil {
+	var st syscall.Stat_t
+	if err := syscall.Fstat(fd, &st); err != nil {
 		return fmt.Errorf("stat failed: %w", err)
 	}
-	fileSize := stat.Size()
+	fileSize := st.Size
 
 	fc.mu.Lock()
 	if fc.totalSize+fileSize > fc.maxSize {
@@ -140,9 +149,9 @@ func (fc *FileCache) readFromDisk(entry *CacheEntry) error {
 	fc.mu.Unlock()
 
 	roundedSize := ((fileSize + fc.blockSize - 1) / fc.blockSize) * fc.blockSize
-	buf := make([]byte, roundedSize)
+	buf := alignedSlice(roundedSize, fc.blockSize)
 
-	n, err := syscall.Read(int(fd.Fd()), buf)
+	n, err := syscall.Read(fd, buf)
 	if err != nil {
 		fc.mu.Lock()
 		fc.totalSize -= fileSize
@@ -150,12 +159,9 @@ func (fc *FileCache) readFromDisk(entry *CacheEntry) error {
 		return fmt.Errorf("read failed: %w", err)
 	}
 
-	data := make([]byte, fileSize)
-	copy(data, buf[:n])
-
-	entry.data = data
+	entry.data = buf[:n]
 	entry.size = fileSize
-	entry.modifiedAt = stat.ModTime()
+	entry.modifiedAt = time.Unix(st.Mtim.Sec, st.Mtim.Nsec)
 
 	return nil
 }

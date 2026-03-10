@@ -18,7 +18,7 @@ type CacheEntry struct {
 	size       int64
 	addedAt    time.Time
 	modifiedAt time.Time
-	mu         sync.Mutex
+	ready      chan struct{}
 	err        error
 }
 
@@ -73,8 +73,7 @@ func NewFileCache(maxSize int64, ttl time.Duration) (*FileCache, error) {
 
 // waitReady aspetta che il caricamento dell'entry sia completato
 func waitReady(entry *CacheEntry) (*CacheEntry, error) {
-	entry.mu.Lock()
-	entry.mu.Unlock()
+	<-entry.ready
 	return entry, entry.err
 }
 
@@ -98,8 +97,7 @@ func (fc *FileCache) Load(path string) (LoadResult, error) {
 		delete(fc.entries, path)
 	}
 
-	entry = &CacheEntry{path: path, addedAt: time.Now()}
-	entry.mu.Lock() // in attesa di valorizzazione
+	entry = &CacheEntry{path: path, addedAt: time.Now(), ready: make(chan struct{})}
 
 	fc.entries[path] = entry
 	fc.mu.Unlock()
@@ -112,11 +110,11 @@ func (fc *FileCache) Load(path string) (LoadResult, error) {
 		}
 		fc.mu.Unlock()
 
-		entry.mu.Unlock()
+		close(entry.ready)
 		return LoadResult{}, err
 	}
 
-	entry.mu.Unlock()
+	close(entry.ready)
 	return LoadResult{Entry: entry, Hit: false}, nil
 }
 
